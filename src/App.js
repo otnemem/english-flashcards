@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Papa from 'papaparse';
 import Confetti from 'react-confetti';
 import FileUploader from './components/FileUploader';
@@ -9,127 +9,149 @@ import CompletionCelebration from './components/CompletionCelebration';
 import './App.css';
 
 function App() {
-  const [cards, setCards] = useState([]);
+  const [allCards, setAllCards] = useState([]);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [learnedCards, setLearnedCards] = useState(new Set());
   const [isFlipped, setIsFlipped] = useState(false);
   const [showCelebration, setShowCelebration] = useState(false);
+  const [nowTime, setNowTime] = useState(Date.now());
 
-  // CSV dosyasını yükle
+  useEffect(() => {
+    const timer = setInterval(() => setNowTime(Date.now()), 10000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const dueCards = allCards.filter((c) => c.nextReviewDate <= nowTime);
+  const safeIndex = currentIndex >= dueCards.length ? 0 : currentIndex;
+  const activeCard = dueCards[safeIndex];
+
+  const learnedCount = allCards.filter((c) => c.nextReviewDate > nowTime).length;
+  const totalCards = allCards.length;
+
   const handleFileUpload = (file) => {
     Papa.parse(file, {
       header: false,
       skipEmptyLines: true,
+      delimiter: ';',
       complete: (results) => {
+        const srsData = JSON.parse(localStorage.getItem('english_flashcards_srs') || '{}');
+
         const parsedCards = results.data
-          .map((row) => ({
-            word: row[0]?.trim() || '',
-            meaning: row[1]?.trim() || '',
-          }))
-          .filter((card) => card.word && card.meaning);
+          .map((row) => {
+            const word = row[0]?.trim() || '';
+            const meaning = row[1]?.trim() || '';
+
+            if (!word || !meaning) return null;
+
+            return {
+              word,
+              meaning,
+              repetition: srsData[word]?.repetition || 0,
+              interval: srsData[word]?.interval || 0,
+              nextReviewDate: srsData[word]?.nextReviewDate || 0,
+            };
+          })
+          .filter(Boolean);
 
         if (parsedCards.length === 0) {
-          alert('CSV dosyasından geçerli kelime bulunamadı. Lütfen dosya formatını kontrol et.');
+          alert('No valid words found in the CSV file. Please check the file format.');
           return;
         }
 
-        setCards(parsedCards);
+        setAllCards(parsedCards);
+        setNowTime(Date.now());
         setCurrentIndex(0);
-        setLearnedCards(new Set());
         setIsFlipped(false);
         setShowCelebration(false);
       },
       error: (error) => {
-        alert(`Dosya yüklenirken hata oluştu: ${error.message}`);
+        alert(`Error loading file: ${error.message}`);
       },
     });
   };
 
-    // Telaffuz
   const speak = (word) => {
     const utterance = new SpeechSynthesisUtterance(word);
     utterance.lang = 'en-US';
     utterance.rate = 0.7;
-    utterance.pitch = 0.9;
-    utterance.volume = 1.0;
-    
-    // Sesler listesinden İngilizce seç
+
     const voices = window.speechSynthesis.getVoices();
-    const englishVoice = voices.find(voice => 
-      voice.lang.startsWith('en') && voice.name.includes('Google')
-    );
-    if (englishVoice) {
-      utterance.voice = englishVoice;
-    } else {
-      // Eğer Google sesi yoksa, İngilizce herhangi birini seç
-      const alternativeVoice = voices.find(voice => voice.lang.startsWith('en'));
-      if (alternativeVoice) {
-        utterance.voice = alternativeVoice;
-      }
-    }
-    
+    const englishVoice = voices.find(v => v.lang.startsWith('en') && v.name.includes('Google'))
+      || voices.find(v => v.lang.startsWith('en'));
+    if (englishVoice) utterance.voice = englishVoice;
+
     window.speechSynthesis.speak(utterance);
   };
 
-  // Kart tıklandığında flip
-  const toggleFlip = () => {
-    setIsFlipped(!isFlipped);
-  };
+  const toggleFlip = () => setIsFlipped(!isFlipped);
 
-  // Öğrendim butonu
-  const markAsLearned = () => {
-    const newLearned = new Set(learnedCards);
-    newLearned.add(currentIndex);
-    setLearnedCards(newLearned);
-
-    if (newLearned.size === cards.length) {
-      setShowCelebration(true);
-    } else {
-      goToNext();
-    }
-  };
-
-  // Tekrar Et butonu
-  const markAsRepeat = () => {
-    goToNext();
-  };
-
-  // Sonraki karta git
-  const goToNext = () => {
+  const goToNext = useCallback(() => {
     setIsFlipped(false);
-    if (currentIndex < cards.length - 1) {
-      setCurrentIndex(currentIndex + 1);
-    } else {
-      setCurrentIndex(0);
+    if (dueCards.length > 0) {
+      setCurrentIndex((prev) => (prev + 1) % dueCards.length);
     }
-  };
+  }, [dueCards.length]);
 
-  // Önceki karta git
-  const goToPrevious = () => {
+  const goToPrevious = useCallback(() => {
     setIsFlipped(false);
-    if (currentIndex > 0) {
-      setCurrentIndex(currentIndex - 1);
-    } else {
-      setCurrentIndex(cards.length - 1);
+    if (dueCards.length > 0) {
+      setCurrentIndex((prev) => (prev === 0 ? dueCards.length - 1 : prev - 1));
     }
-  };
+  }, [dueCards.length]);
 
-  // Kartları karıştır
   const shuffleCards = () => {
-    const shuffled = [...cards].sort(() => Math.random() - 0.5);
-    setCards(shuffled);
-    setCurrentIndex(0);
     setIsFlipped(false);
+    setAllCards((prev) => [...prev].sort(() => Math.random() - 0.5));
+    setCurrentIndex(0);
   };
 
-  // Klavye tuşları (Ok tuşları)
+  const updateCardSRS = (word, rep, int, nextDate) => {
+    const updatedCards = allCards.map(c =>
+      c.word === word ? { ...c, repetition: rep, interval: int, nextReviewDate: nextDate } : c
+    );
+    setAllCards(updatedCards);
+
+    const srsData = JSON.parse(localStorage.getItem('english_flashcards_srs') || '{}');
+    srsData[word] = { repetition: rep, interval: int, nextReviewDate: nextDate };
+    localStorage.setItem('english_flashcards_srs', JSON.stringify(srsData));
+
+    setNowTime(Date.now());
+    setIsFlipped(false);
+
+    if (updatedCards.filter(c => c.nextReviewDate > Date.now()).length === updatedCards.length) {
+      setShowCelebration(true);
+    }
+  };
+
+  const handleKnown = useCallback(() => {
+    if (!activeCard) return;
+    let rep = activeCard.repetition + 1;
+    let int = activeCard.interval;
+
+    if (rep === 1) int = 1;
+    else if (rep === 2) int = 6;
+    else int = Math.round(int * 2.5);
+
+    const nextDate = Date.now() + (int * 24 * 60 * 60 * 1000);
+    updateCardSRS(activeCard.word, rep, int, nextDate);
+  }, [activeCard, allCards]);
+
+  const handleUnknown = useCallback(() => {
+    if (!activeCard) return;
+    updateCardSRS(activeCard.word, 0, 0, Date.now());
+    goToNext();
+  }, [activeCard, allCards, goToNext]);
+
   useEffect(() => {
     const handleKeyPress = (e) => {
-      if (cards.length === 0) return;
+      if (allCards.length === 0 || showCelebration) return;
 
       if (e.key === 'ArrowRight') {
-        goToNext();
+        handleKnown();
       } else if (e.key === 'ArrowLeft') {
+        handleUnknown();
+      } else if (e.key === 'ArrowDown') {
+        goToNext();
+      } else if (e.key === 'ArrowUp') {
         goToPrevious();
       } else if (e.key === ' ') {
         e.preventDefault();
@@ -139,9 +161,9 @@ function App() {
 
     window.addEventListener('keydown', handleKeyPress);
     return () => window.removeEventListener('keydown', handleKeyPress);
-  }, [currentIndex, cards.length, goToNext, goToPrevious, toggleFlip]);
+  }, [allCards.length, showCelebration, isFlipped, handleKnown, handleUnknown, goToNext, goToPrevious]);
 
-  if (cards.length === 0) {
+  if (allCards.length === 0) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-pink-100 via-purple-100 to-blue-100 flex items-center justify-center p-4">
         <FileUploader onFileUpload={handleFileUpload} />
@@ -154,45 +176,46 @@ function App() {
       {showCelebration && <Confetti />}
 
       <div className="max-w-2xl mx-auto">
-        {/* Başlık */}
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-purple-700 mb-2">🎓 English Flashcards</h1>
-          <p className="text-purple-600">İngilizce kelimeleri öğren ve eğlen!</p>
+          <p className="text-purple-600">Spaced Repetition System</p>
         </div>
 
-        {/* İlerleme Çubuğu */}
-        <ProgressBar learned={learnedCards.size} total={cards.length} />
+        <ProgressBar learned={learnedCount} total={totalCards} />
 
-        {/* Kart */}
         <div className="my-8">
-          {cards.length > 0 && (
+          {dueCards.length > 0 ? (
             <FlashCard
-              card={cards[currentIndex]}
+              card={activeCard}
               isFlipped={isFlipped}
               onFlip={toggleFlip}
               onSpeak={speak}
-              cardNumber={currentIndex + 1}
-              totalCards={cards.length}
+              currentIndex={safeIndex}
+              dueCount={dueCards.length}
             />
+          ) : (
+            <div className="text-center bg-white p-10 rounded-3xl shadow-xl">
+              <h2 className="text-3xl font-bold text-green-500 mb-4">Great Job! 🎉</h2>
+              <p className="text-gray-600 text-lg">You have finished all the words you need to review today.</p>
+              <p className="text-gray-500 mt-2">You can upload a new CSV if you want to practice more.</p>
+            </div>
           )}
         </div>
 
-        {/* Butonlar */}
-        <Controls
-          onMarkAsLearned={markAsLearned}
-          onMarkAsRepeat={markAsRepeat}
-          onNext={goToNext}
-          onPrevious={goToPrevious}
-          onShuffle={shuffleCards}
-          isLearned={learnedCards.has(currentIndex)}
-        />
+        {dueCards.length > 0 && !showCelebration && (
+          <Controls
+            onKnown={handleKnown}
+            onUnknown={handleUnknown}
+            onNext={goToNext}
+            onPrevious={goToPrevious}
+            onShuffle={shuffleCards}
+          />
+        )}
 
-        {/* Tamamlama Kutlaması */}
         {showCelebration && (
           <CompletionCelebration
             onRestart={() => {
-              setCards([]);
-              setLearnedCards(new Set());
+              setAllCards([]);
               setShowCelebration(false);
             }}
           />

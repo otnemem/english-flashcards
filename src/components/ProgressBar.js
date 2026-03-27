@@ -6,7 +6,7 @@ function ProgressBar({ learned, total }) {
   return (
     <div className="bg-white rounded-full shadow-lg p-6 mb-8">
       <div className="flex justify-between items-center mb-4">
-        <p className="text-purple-700 font-bold text-lg">İlerleme</p>
+        <p className="text-purple-700 font-bold text-lg">Progress</p>
         <p className="text-purple-600 font-semibold">
           {learned} / {total}
         </p>
@@ -26,19 +26,19 @@ function ProgressBar({ learned, total }) {
         </div>
       </div>
 
-      {/* Motivasyon Metni */}
+      {/* Motivation Text */}
       <div className="mt-4 text-center">
         {percentage === 0 && (
-          <p className="text-purple-600 font-semibold">🚀 Hadi başlayalım!</p>
+          <p className="text-purple-600 font-semibold">🚀 Let's get started!</p>
         )}
         {percentage > 0 && percentage < 50 && (
-          <p className="text-purple-600 font-semibold">💪 Harika başlang aç!</p>
+          <p className="text-purple-600 font-semibold">💪 Great start!</p>
         )}
         {percentage >= 50 && percentage < 100 && (
-          <p className="text-purple-600 font-semibold">🌟 Neredeyse bitiyorsun!</p>
+          <p className="text-purple-600 font-semibold">🌟 Almost there!</p>
         )}
         {percentage === 100 && (
-          <p className="text-purple-600 font-semibold">🎉 Tebrikler!</p>
+          <p className="text-purple-600 font-semibold">🎉 Congratulations!</p>
         )}
       </div>
     </div>
